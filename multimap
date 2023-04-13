@@ -1,0 +1,1178 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = /* color: #23cba7 */ee.Geometry.MultiPoint();
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+
+// Create Multiple Panels
+
+var towers = ee.FeatureCollection("projects/co2-app2023/assets/site_summary_v0_3_2");    
+//------------------------------------------------------------------------------------
+//  SET ENV VARS
+//------------------------------------------------------------------------------------
+
+//Modis collection
+var modis = 'MODIS/006/MOD17A2H'
+var modis_band = 'Gpp';
+var modis_band_scaled = modis_band +'_scaled';
+var modis_annual_band = 'GPP';
+var modis_annual_band_scaled = modis_annual_band +'_scaled';
+
+
+// Modis Annual
+var uriModisAnnual = 'gs://co2_app/GPP_MODIS_ANNUAL/COG/';
+var modisAnnualFilename ='gpp_modis_YEAR_cog.tif'
+
+//Cedar collection
+var uriBaseCedarCFE = 'gs://co2_app/GPP_CTE_ST_NT_BASE/COG/';
+var uriBaseCedarML = 'gs://co2_app/GPP_CTE_ST_NT_ML/COG/';
+var uriBaseCedarHYBRID = 'gs://co2_app/GPP_CTE_ST_NT_HYBRID/COG/';
+
+var cedarMLFilename ='gpp_cte_st_nt_YEAR_cog.tif'
+var cedarCFEFilename ='gpp_cte_st_nt_YEAR_cog.tif'
+var cedarHYBRIDFilename ='gpp_cte_st_nt_YEAR_cog.tif'
+
+var cedar_band = 'GPP_mean';
+var cedar_band_scaled = cedar_band+'_scaled';
+
+// Define a scale factor
+var modisScaleFactor = 0.01;
+var cedarScaleFactor = 0.00001;
+var modisAnnualScaleFactor = 0.1;
+
+//------------------------------------------------------------------------------------
+//  IMPORT CUSTOM DATA
+//------------------------------------------------------------------------------------
+
+//Create lists of files
+var urisYearModis = [];
+var urisYearCfe = [];
+var urisYearML = [];
+var urisYearHybrid = [];
+
+var i;
+var filename;
+
+// Modis Annual
+for(i = 2001; i < 2021; i++) {
+  filename = uriModisAnnual + modisAnnualFilename.replace("YEAR", i);
+  urisYearModis.push(filename);
+}
+
+// CFE
+for(i = 2001; i < 2021; i++) {
+  filename = uriBaseCedarCFE + cedarCFEFilename.replace("YEAR", i);
+  urisYearCfe.push(filename);
+}
+
+// ML
+for(i = 2001; i < 2021; i++) {
+  filename = uriBaseCedarML + cedarMLFilename.replace("YEAR", i);
+  urisYearML.push(filename);
+}
+
+// Hybrid
+for(i = 2001; i < 2021; i++) {
+  filename = uriBaseCedarHYBRID + cedarHYBRIDFilename.replace("YEAR", i);
+  urisYearHybrid.push(filename);
+}
+
+//Make a collection from the list of images.
+var imagesYearModisAnnual = urisYearModis.map(loadUri);
+var imagesYearCedarCfe = urisYearCfe.map(loadUri);
+var imagesYearCedarML = urisYearML.map(loadUri);
+var imagesYearCedarHybrid = urisYearHybrid.map(loadUri);
+
+//------------------------------------------------------------------------------------
+//  HELPER FUNCTIONS
+//------------------------------------------------------------------------------------
+
+// load custom images using URI
+function loadUri(uri) {
+  var yearPattern = /\d{4}/;
+  var year = yearPattern.exec(uri); 
+  var img = ee.Image.loadGeoTIFF(uri)
+    .set('system:time_start',ee.Date(String(year)).millis())
+    .set('year',String(year))
+    .set('url',String(uri));
+  return img;
+}
+
+// scaling functions
+function scaleModis(dataset) {
+  var result = dataset.select(modis_band).multiply(modisScaleFactor)
+  return dataset.addBands(result.rename(modis_band + '_scaled'));
+}
+
+function scaleModisAnnual(dataset) {
+  var result = dataset.select(modis_annual_band).multiply(modisAnnualScaleFactor)
+  return dataset.addBands(result.rename(modis_annual_band + '_scaled'));
+}
+
+function scaleCedar(dataset) {
+  var result = dataset.select(cedar_band).multiply(cedarScaleFactor)
+  return dataset.addBands(result.rename(cedar_band + '_scaled'));
+}
+
+//Function to create composites by year
+var yearly_composite = function(dataset, year) {
+  var start = ee.Date.fromYMD(year, 1, 1); 
+  var end = start.advance(1, 'year').advance(-1, 'day') 
+  var filtered = dataset.filterDate(start, end)
+  var composite = filtered.sum()
+  return composite.set('year', year)
+                .set('system:time_start', start.millis())
+}
+
+
+//------------------------------------------------------------------------------------
+//  INIT APP
+//------------------------------------------------------------------------------------
+
+//Set up default values for when the app launches
+var startofYearDefault = ee.Date.fromYMD(2020, 1, 1);
+var endofYearDefault = startofYearDefault.advance(1, 'year').advance(-1, 'day')
+
+
+var years = {
+2001:2001,
+2002:2002,
+2003:2003,
+2004:2004,
+2005:2005,
+2006:2006,
+2007:2007,
+2008:2008,
+2009:2009,
+2010:2010,
+2011:2011,
+2012:2012,
+2013:2013,
+2014:2014,
+2015:2015,
+2016:2016,
+2017:2017,
+2018:2018,
+2019:2019,
+2020:2020
+};
+
+
+// init UI
+var lblStartYear = ui.Label({
+    value:'Start:',
+    style:{},
+  });
+  
+var selectStartYear = ui.Select({
+  items: Object.keys(years),
+  value: '2020',
+  placeholder:'Year',
+  style: {width: '100px'}
+});
+
+var lblEndYear = ui.Label({
+    value:'End:',
+    style:{},
+  });
+  
+
+var selectEndYear = ui.Select({
+  items: Object.keys(years),
+  value: '2020',
+  placeholder:'Year',
+  style: {width: '100px'}
+});
+
+//Lists for years
+var yearsSeq = ee.List.sequence(parseInt(selectStartYear.getValue()),parseInt(selectEndYear.getValue()))
+
+// set color palette
+var gppVis = {
+  min: 0.0,
+  max: 400, //max: 3500.0,
+  palette: ['bbe029', '0a9501', '074b03'],
+};
+
+
+//Filter modis annual composite data by date filters
+var startYear = selectStartYear.getValue();
+var endYear = selectEndYear.getValue();
+
+
+//Set up Map
+var lblMap = ui.Label({
+    value:'MODIS Annual',//default map label
+    style: {color: '0a9501'},
+  });
+// var mapPanel = ui.Map();
+
+// var multiMapSplitPanel
+// var mapPanelContainer
+var dataset1
+var dataset2
+var dataset3
+var dataset4
+var datasetScaled1  
+var datasetScaled2
+var datasetScaled3  
+var datasetScaled4
+var bandname1
+var bandname2
+var bandname3
+var bandname4;
+
+var band1;
+var band2;
+var band3;
+var band4;
+
+// Define the maps
+var map1 = ui.Map();
+var map2 = ui.Map();
+var map3 = ui.Map();
+var map4 = ui.Map();
+
+// Set the initial center coordinates
+var initialCenter = ee.Geometry.Point([-122.4369, 37.8010]);
+
+// Tie the center coordinates of all maps together
+map1.centerObject(initialCenter,9);
+map2.centerObject(initialCenter,9);
+map3.centerObject(initialCenter,9);
+map4.centerObject(initialCenter,9);
+map1.setZoom(9);
+map2.setZoom(9);
+map3.setZoom(9);
+map4.setZoom(9);
+
+var lblMap1 = ui.Label({
+  style: {color: '0a9501'},
+});
+map1.add(lblMap1);
+
+var lblMap2 = ui.Label({
+  style: {color: '0a9501'},
+});
+map2.add(lblMap2);
+
+var lblMap3 = ui.Label({
+  style: {color: '0a9501'},
+});
+map3.add(lblMap3);
+
+var lblMap4 = ui.Label({
+  style: {color: '0a9501'},
+});
+map4.add(lblMap4);
+  
+//Arrange input panel and map panel
+var inputPanel = ui.Panel({style: {width: '23%'}});
+
+          
+//Create input widgets
+var header = ui.Label({
+  value: 'View Multiple Models',
+  style: {fontSize: '24px', color:'074b03'}
+});
+
+var lblModelSelectInstructions = ui.Label({
+  value: 'View Gross Primary Production (GPP) for multiple models - MODIS Annual, CEDAR CFE Annual, CEDAR ML Annual, CEDAR Hybrid Annual. Select a date range and click Refresh Views.',
+  style: {fontSize: '11px', padding:'0 7px 0 0'}
+});
+
+var lblModelSelectInstructions2 = ui.Label({
+  value: 'The upper left panel',
+  style: {fontSize: '11px', padding:'0 7px 0 0'}
+});
+var validation = ui.Label({
+      style: {fontSize: '12px', color: 'Red'}
+    }); 
+
+
+//Date widgets
+var lblStartDateMY = ui.Label({
+    value:'Start:',
+    style:{width:'50px'},
+  });
+  
+var lblEndDateMY = ui.Label({
+    value:'End:',
+    style:{width:'50px'},
+  });
+  
+var startDatePanel = ui.Panel({
+    widgets: [
+    lblStartDateMY,
+    selectStartYear
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+
+var endDatePanel = ui.Panel({
+    widgets: [
+    lblEndDateMY,
+    selectEndYear
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});  
+    
+
+var filterPanel = ui.Panel({
+    widgets: [
+    startDatePanel,
+    endDatePanel,
+  ],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {padding:'0px 0px 14px 0px'}
+});
+
+var btnGPPMulti = ui.Button({
+      label: "Refresh Views",
+      onClick: viewMultiModelGPP,
+      style: {color:'0a9501'}
+    });
+    
+var filterPanelMulti = ui.Panel({
+    widgets: [
+    btnGPPMulti
+  ],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {padding:'0px 0px 14px 0px'}
+});
+
+
+//Region widgets
+var symbol = {
+  rectangle: '⬛',
+  polygon: '🔺',
+  point: '📍',
+};
+
+var btnPolygon = ui.Button({
+      label: symbol.polygon + ' Polygon',
+      onClick: drawPolygon
+    });
+    
+var btnRectangle = ui.Button({
+      label: symbol.rectangle + ' Rectangle',
+      onClick: drawRectangle
+    }); 
+    
+var btnPoint = ui.Button({
+      label: symbol.point + ' Point',
+      onClick: drawPoint
+    });
+    
+var btnClearRegion = ui.Button({
+      label: 'Clear Region',
+      onClick: clearGeometry,
+    });
+ 
+var lblLayersHeader = ui.Label({
+      value: 'ADD LAYERS',
+      style: {fontSize: '14px', color: '484848',fontWeight:'bold'}
+    });
+  
+var chkFluxtowerLayer = ui.Checkbox("Add Flux Towers");
+chkFluxtowerLayer.setValue(true);
+
+// var chkFireLayer = ui.Checkbox("Add MODIS Global Burned Areas");
+var layerPanel = ui.Panel({
+  widgets: [
+    lblLayersHeader,
+    chkFluxtowerLayer,
+    //chkFireLayer
+  ],
+  layout: ui.Panel.Layout.flow('vertical')
+});
+
+var lblRegion = ui.Label({
+      value: 'SELECT REGIONS',
+      style: {fontSize: '14px', color: '484848',fontWeight:'bold'}
+    });
+    
+var lblRegionSelectInstructions = ui.Label({
+  value: 'To select a region in all 4 panels select a drawing tool button and select a region in the upper left panel Modis Annual. The same region will be selected in all 4 panels.',
+  style: {fontSize: '11px', padding:'0 7px 0 0'}
+});
+
+var regionButtonPanel = ui.Panel({
+  widgets: [
+    btnRectangle,
+    btnPolygon,
+    btnPoint,
+    btnClearRegion
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+
+var regionPanel = ui.Panel({
+  widgets: [
+    lblRegion,
+    lblRegionSelectInstructions,
+    regionButtonPanel
+  ],
+  layout: ui.Panel.Layout.flow('vertical')
+});
+
+var vis = {min: 0, max: 400, palette: "bbe029, 0a9501, 0a9501"};
+
+// Create the color bar for the legend.
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0),
+  params: makeColorBarParams(vis.palette),
+  style: {stretch: 'horizontal', margin: '0px 8px', maxHeight: '24px'},
+});
+
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(vis.min, {margin: '4px 8px'}),
+    ui.Label(
+        (vis.max / 2),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(vis.max, {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+
+var legendTitle = ui.Label({
+  value: 'GPP Min/Max kg*C/m^2',
+  style: {fontWeight: 'bold'}
+});
+
+var legendPanel = ui.Panel({
+  widgets:[legendTitle, colorBar, legendLabels],
+
+});
+
+//Main panel
+var controlPanel = ui.Panel({
+  widgets: [
+    header,
+    lblModelSelectInstructions,
+    validation,
+    filterPanel,
+    filterPanelMulti,
+    layerPanel,
+    regionPanel,
+    legendPanel
+  ],
+  style: {position: 'top-left'},
+  layout: ui.Panel.Layout.flow('vertical'),
+});
+inputPanel.add(controlPanel);
+
+
+// init drawing tools
+var drawingTools1 = map1.drawingTools().setShown(false);
+var drawingTools2 = map2.drawingTools().setShown(false);
+var drawingTools3 = map3.drawingTools().setShown(false);
+var drawingTools4 = map4.drawingTools().setShown(false);
+
+map1.drawingTools().setLinked(true);
+map2.drawingTools().setLinked(true);
+map3.drawingTools().setLinked(true);
+map4.drawingTools().setLinked(true);
+ui.Map.Linker([map1, map2, map3, map4]);
+
+while (drawingTools1.layers().length() > 0) {
+  var layer = drawingTools1.layers().get(0);
+  drawingTools1.layers().remove(layer);
+}
+
+while (drawingTools2.layers().length() > 0) {
+  var layer = drawingTools2.layers().get(0);
+  drawingTools2.layers().remove(layer);
+}
+
+while (drawingTools3.layers().length() > 0) {
+  var layer = drawingTools3.layers().get(0);
+  drawingTools3.layers().remove(layer);
+}
+
+while (drawingTools4.layers().length() > 0) {
+  var layer = drawingTools4.layers().get(0);
+  drawingTools4.layers().remove(layer);
+}
+
+drawingTools4.onDraw(ui.util.debounce(chartTimeSeries, 500));
+drawingTools4.onEdit(ui.util.debounce(chartTimeSeries, 500));
+
+var dummyGeometry =
+    ui.Map.GeometryLayer({geometries: null, name: 'geometry', color: '23cba7'});
+
+drawingTools4.layers().add(dummyGeometry);
+
+
+// init timeseries widgets
+var lblTimeSeries = ui.Label({
+      value: 'View Timeseries',
+      style: {fontSize: '14px', color: '484848'}
+    });
+    
+var lblTimeSeries2 = ui.Label({
+      value: 'View Timeseries',
+      style: {fontSize: '14px', color: '484848'}
+    });
+    
+var chartPanel1 = ui.Panel({
+  style:{ position: 'top-left', shown: false}
+});
+
+var chartPanel2 = ui.Panel({
+  style:{ position: 'top-left', shown: false}
+});
+
+var chartPanel3 = ui.Panel({
+  style:{ position: 'top-left', shown: false}
+});
+
+var chartPanel4 = ui.Panel({
+  style:{ position: 'top-left', shown: false}
+});
+
+map1.add(chartPanel1);
+map2.add(chartPanel2);
+map3.add(chartPanel3);
+map4.add(chartPanel4);
+
+
+//CEDAR CFE Annual
+dataset1 = ee.ImageCollection(imagesYearCedarCfe)
+  .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+  .filter(ee.Filter.lessThanOrEquals('year', endYear));
+      
+// Multiply the Keenan dataset by the scale factor
+datasetScaled1 = dataset1.map(scaleCedar);
+
+// set plotting parameters
+bandname1 = cedar_band_scaled;
+
+band1 = datasetScaled1.select(cedar_band_scaled);
+
+var gppVis1 = {
+  min: 0.0,
+  max: 400.0,
+  palette: ['bbe029', '0a9501', '074b03'],
+  //  palette: ['ff0000', 'f0ff00', '074b03'],
+};
+lblMap1.setValue('CEDAR CFE Annual');
+
+
+//CEDAR ML Annual
+dataset2 = ee.ImageCollection(imagesYearCedarML)
+  .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+  .filter(ee.Filter.lessThanOrEquals('year', endYear));
+    
+datasetScaled2 = dataset2.map(scaleCedar);
+
+// set plotting parameters
+bandname2 = cedar_band_scaled;
+
+band2 = datasetScaled2.select(cedar_band_scaled);
+
+var gppVis2 = {
+  min: 0.0,
+  max: 400.0,
+  palette: ['bbe029', '0a9501', '074b03'],
+  //  palette: ['ff0000', 'f0ff00', '074b03'],
+};
+  
+lblMap2.setValue('CEDAR ML Annual');
+
+
+//CEDAR Hybrid Annual
+dataset3 = ee.ImageCollection(imagesYearCedarHybrid)
+  .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+  .filter(ee.Filter.lessThanOrEquals('year', endYear));
+  
+datasetScaled3 = dataset3.map(scaleCedar);
+
+// set plotting parameters
+band3 = datasetScaled3.select(cedar_band_scaled);
+
+bandname3 = cedar_band_scaled;
+
+var gppVis3 = {
+  min: 0.0,
+  max: 400.0,
+  palette: ['bbe029', '0a9501', '074b03'],
+  //  palette: ['ff0000', 'f0ff00', '074b03'],
+};
+lblMap3.setValue('CEDAR Hybrid Annual'); 
+
+
+//MODIS Annual
+dataset4 = ee.ImageCollection(imagesYearModisAnnual)
+  .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+  .filter(ee.Filter.lessThanOrEquals('year', endYear));
+  
+datasetScaled4 = dataset4.map(scaleModisAnnual);
+
+// set plotting parameters
+band4 = datasetScaled4.select(modis_annual_band_scaled);
+
+bandname4 = modis_annual_band_scaled;
+
+var gppVis4 = {
+  min: 0.0,
+  max: 400.0,
+  palette: ['bbe029', '0a9501', '074b03'],
+  //  palette: ['ff0000', 'f0ff00', '074b03'],
+};
+lblMap4.setValue('MODIS Annual'); 
+
+// Load GPP on map
+map1.layers().reset();
+map2.layers().reset();
+map3.layers().reset();
+map4.layers().reset();
+
+map1.addLayer(band1, gppVis1, bandname1);
+map2.addLayer(band2, gppVis2, bandname2);
+map3.addLayer(band3, gppVis3, bandname3);
+map4.addLayer(band4, gppVis4, bandname4);
+
+if(chkFluxtowerLayer.getValue()){
+  addFluxTowerLayer(true,map1)
+  addFluxTowerLayer(true,map2)
+  addFluxTowerLayer(true,map3)
+  addFluxTowerLayer(true,map4)
+}
+
+
+if (chartPanel4.style().get('shown')) {
+    chartTimeSeries();
+}
+
+// Event listeners to update the center coordinates when map is moved
+// Modis panel 4 controls all panels
+var updateCenter = function() {
+  var center = map1.getCenter();
+  map1.centerObject(center,map4.getZoom());
+  map2.centerObject(center,map4.getZoom());
+  map3.centerObject(center,map4.getZoom());
+};
+
+var updateZoom = function() {
+  map1.setZoom(map4.getZoom());
+  map2.setZoom(map4.getZoom());
+  map3.setZoom(map4.getZoom());
+};
+
+
+map1.onChangeCenter(updateCenter);
+map1.onChangeZoom(updateZoom);
+map1.setControlVisibility({zoomControl: true});
+
+// Show scale 
+map3.setControlVisibility({scaleControl: true});
+
+// Create a grid of maps.
+var mapPanel = ui.Panel(
+    [
+      inputPanel,
+      ui.Panel([map4, map1], null, {stretch: 'both'}),
+      ui.Panel([map2, map3], null, {stretch: 'both'})
+    ],
+    ui.Panel.Layout.Flow('horizontal'), {stretch: 'both'});
+
+// map center
+map4.setCenter(112.4729, -7.4809, 9);
+
+// Add images and title to the ui.root.
+ui.root.widgets().reset([mapPanel]);
+ui.root.setLayout(ui.Panel.Layout.Flow('vertical'));
+
+
+//------------------------------------------------------------------------------------
+//  APP FUNCTIONS
+//------------------------------------------------------------------------------------
+
+// functions
+function makeColorBarParams(palette) {
+  return {
+    bbox: [0, 0, 1, 0.1],
+    dimensions: '100x10',
+    format: 'png',
+    min: 0,
+    max: 1,
+    palette: palette,
+  };
+}
+
+function clearGeometry() {
+  drawingTools1.layers().get(0).geometries().remove(drawingTools1.layers().get(0).geometries().get(0));
+  drawingTools2.layers().get(0).geometries().remove(drawingTools2.layers().get(0).geometries().get(0));
+  drawingTools3.layers().get(0).geometries().remove(drawingTools3.layers().get(0).geometries().get(0));
+  drawingTools4.layers().get(0).geometries().remove(drawingTools4.layers().get(0).geometries().get(0));
+  
+  chartPanel1.clear();
+  chartPanel2.clear();
+  chartPanel3.clear();
+  chartPanel4.clear();
+  chartPanel1.style().set('shown', false);
+  chartPanel2.style().set('shown', false);
+  chartPanel3.style().set('shown', false);
+  chartPanel4.style().set('shown', false);
+}
+
+function drawRectangle() {
+  clearGeometry();
+  drawingTools4.setShape('rectangle');
+  drawingTools4.draw();
+}
+
+function drawPolygon() {
+  clearGeometry();
+  drawingTools4.setShape('polygon');
+  drawingTools4.draw();
+}
+
+function drawPoint() {
+  clearGeometry();
+  drawingTools4.setShape('point');
+  drawingTools4.draw();
+}
+
+function validateDates() {
+  var startYear = selectStartYear.getValue();
+  var endYear = selectEndYear.getValue();
+  if (startYear===null || endYear===null) {
+    validation.setValue("Please select a valid date range.");
+    return false;
+  } else {
+    var startDate = getStartDate();
+    var endDate = getEndDate();
+
+    if (ee.Date(startDate).millis().gt(ee.Date(endDate).millis()).getInfo()>0) {
+      validation.setValue("Please select a valid date range.");
+
+      return false;
+    }else{
+      validation.setValue("");
+      return true;
+    }    
+  }
+}
+
+function getStartDate(){
+  var startYear = years[selectStartYear.getValue()];
+  var startDate = ee.Date.fromYMD(startYear, 1, 1)
+  return startDate.format('YYYY-MM-dd');
+}
+
+function getEndDate(){
+  var endYear = years[selectEndYear.getValue()];
+  var endDate = ee.Date.fromYMD(endYear, 12, 31)
+  return endDate.format('YYYY-MM-dd');
+}
+
+
+
+//Filter GPP data by inputs
+function viewMultiModelGPP (){
+  
+  clearGeometry()
+  map1.drawingTools().setLinked(true);
+  map2.drawingTools().setLinked(true);
+  map3.drawingTools().setLinked(true);
+  map4.drawingTools().setLinked(true);
+  ui.Map.Linker([map1, map2, map3, map4]);
+  
+  while (drawingTools1.layers().length() > 0) {
+    layer = drawingTools1.layers().get(0);
+    drawingTools1.layers().remove(layer);
+  }
+  
+  while (drawingTools2.layers().length() > 0) {
+    layer = drawingTools2.layers().get(0);
+    drawingTools2.layers().remove(layer);
+  }
+  
+  while (drawingTools3.layers().length() > 0) {
+    layer = drawingTools3.layers().get(0);
+    drawingTools3.layers().remove(layer);
+  }
+  
+  while (drawingTools4.layers().length() > 0) {
+    layer = drawingTools4.layers().get(0);
+    drawingTools4.layers().remove(layer);
+  }
+  
+  //Modis Annual panel is the main controlling panel
+  drawingTools4.onDraw(ui.util.debounce(chartTimeSeries, 500));
+  drawingTools4.onEdit(ui.util.debounce(chartTimeSeries, 500));
+  
+  var dummyGeometry =
+      ui.Map.GeometryLayer({geometries: null, name: 'geometry', color: '23cba7'});
+  
+  drawingTools1.layers().add(dummyGeometry);
+  
+  ui.Map.Linker([map1, map2, map3, map4]);
+
+    //Filter modis annual composite data by date filters
+  var startYear = selectStartYear.getValue();
+  var endYear = selectEndYear.getValue();
+
+  
+  //CEDAR CFE Annual
+  dataset1 = ee.ImageCollection(imagesYearCedarCfe)
+    .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+    .filter(ee.Filter.lessThanOrEquals('year', endYear));
+ 
+  // Multiply the Keenan dataset by the scale factor
+ datasetScaled1 = dataset1.map(scaleCedar);
+    
+  // set plotting parameters
+  bandname1 = cedar_band_scaled;
+  
+  band1 = datasetScaled1.select(cedar_band_scaled);
+
+  var gppVis1 = {
+    min: 0.0,
+    max: 400.0,
+    palette: ['bbe029', '0a9501', '074b03'],
+    //  palette: ['ff0000', 'f0ff00', '074b03'],
+  };
+  lblMap1.setValue('CEDAR CFE Annual');
+
+
+  //CEDAR ML Annual
+  dataset2 = ee.ImageCollection(imagesYearCedarML)
+    .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+    .filter(ee.Filter.lessThanOrEquals('year', endYear));
+      
+  datasetScaled2 = dataset2.map(scaleCedar);
+  
+  // set plotting parameters
+  bandname2 = cedar_band_scaled;
+  
+  band2 = datasetScaled2.select(cedar_band_scaled);
+  
+  var gppVis2 = {
+    min: 0.0,
+    max: 400.0,
+    palette: ['bbe029', '0a9501', '074b03'],
+    //  palette: ['ff0000', 'f0ff00', '074b03'],
+  };
+  
+  lblMap2.setValue('CEDAR ML Annual');
+
+
+  //CEDAR Hybrid Annual
+  dataset3 = ee.ImageCollection(imagesYearCedarHybrid)
+    .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+    .filter(ee.Filter.lessThanOrEquals('year', endYear));
+    
+  datasetScaled3 = dataset3.map(scaleCedar);
+  
+  // set plotting parameters
+  band3 = datasetScaled3.select(cedar_band_scaled);
+  
+  bandname3 = cedar_band_scaled;
+  
+  var gppVis3 = {
+    min: 0.0,
+    max: 400.0,
+    palette: ['bbe029', '0a9501', '074b03'],
+    //  palette: ['ff0000', 'f0ff00', '074b03'],
+  };
+  lblMap3.setValue('CEDAR Hybrid Annual'); 
+
+
+  //MODIS Annual
+  dataset4 = ee.ImageCollection(imagesYearModisAnnual)
+    .filter(ee.Filter.greaterThanOrEquals('year', startYear))
+    .filter(ee.Filter.lessThanOrEquals('year', endYear));
+    
+  datasetScaled4 = dataset4.map(scaleModisAnnual);
+  
+  // set plotting parameters
+  band4 = datasetScaled4.select(modis_annual_band_scaled);
+  
+  bandname4 = modis_annual_band_scaled;
+  
+  var gppVis4 = {
+    min: 0.0,
+    max: 400.0,
+    palette: ['bbe029', '0a9501', '074b03'],
+    //  palette: ['ff0000', 'f0ff00', '074b03'],
+  };
+  lblMap4.setValue('MODIS Annual'); 
+
+    
+  // Load GPP on map
+  map1.layers().reset();
+  map2.layers().reset();
+  map3.layers().reset();
+  map4.layers().reset();
+
+  map1.addLayer(band1, gppVis1, bandname1);
+  map2.addLayer(band2, gppVis2, bandname2);
+  map3.addLayer(band3, gppVis3, bandname3);
+  map4.addLayer(band4, gppVis4, bandname4);
+
+  if(chkFluxtowerLayer.getValue()){
+    addFluxTowerLayer(true,map1)
+    addFluxTowerLayer(true,map2)
+    addFluxTowerLayer(true,map3)
+    addFluxTowerLayer(true,map4)
+  }
+  
+  if (chartPanel1.style().get('shown')) {
+      chartTimeSeries();
+  }
+
+}
+
+//Create time series chart
+function chartTimeSeries() {
+  // Make the chart panel visible the first time a geometry is drawn.
+  if (!chartPanel1.style().get('shown')) {
+    chartPanel1.style().set('shown', true);
+    chartPanel2.style().set('shown', true);
+    chartPanel3.style().set('shown', true);
+    chartPanel4.style().set('shown', true);
+  }
+
+  // Get the drawn geometry; it will define the reduction region.
+  var aoi1 = drawingTools1.layers().get(0).getEeObject();
+  var aoi2 = drawingTools2.layers().get(0).getEeObject();
+  var aoi3 = drawingTools3.layers().get(0).getEeObject();
+  var aoi4 = drawingTools4.layers().get(0).getEeObject();
+
+  // Set the drawing mode back to null; turns drawing off.
+  drawingTools1.setShape(null);
+
+  var imagecollectionsize1 = band1.size();
+  var imagecollectionsize2 = band2.size();
+  var imagecollectionsize3 = band3.size();
+  var imagecollectionsize4 = band4.size();
+  
+    // Reduction scale is based on map scale to avoid memory/timeout errors.
+  var mapScale = Map.getScale();
+  // (condition) ? return if true : return if false
+  var scale = (mapScale < 1000) ? mapScale * 2 : 1000;
+
+  if(imagecollectionsize1.getInfo()>1){
+    // Chart GPP time series for the selected area of interest if there are multiple dates.
+    var chart1 = ui.Chart.image
+                    .seriesByRegion({
+                      imageCollection: band1,
+                      regions: aoi1,
+                      reducer: ee.Reducer.mean(),
+                      band: bandname1,
+                      scale: scale,
+                      xProperty: 'system:time_start'
+                    })
+                    .setOptions({
+                      titlePostion: 'none',
+                      legend: {position: 'none'},
+                      hAxis: {title: 'Date'},
+                      vAxis: {title: 'GPP  kg*C/m^2'},
+                      series: {0: {color: '2ecc71'}}
+                    });
+    
+    // Replace the existing chart in the chart panel with the new chart.
+    chartPanel1.widgets().reset([chart1]);
+    
+        // Chart GPP time series for the selected area of interest if there are multiple dates.
+    var chart2 = ui.Chart.image
+                    .seriesByRegion({
+                      imageCollection: band2,
+                      regions: aoi2,
+                      reducer: ee.Reducer.mean(),
+                      band: bandname2,
+                      scale: scale,
+                      xProperty: 'system:time_start'
+                    })
+                    .setOptions({
+                      titlePostion: 'none',
+                      legend: {position: 'none'},
+                      hAxis: {title: 'Date'},
+                      vAxis: {title: 'GPP  kg*C/m^2'},
+                      series: {0: {color: '2ecc71'}}
+                    });
+    
+    // Replace the existing chart in the chart panel with the new chart.
+    chartPanel2.widgets().reset([chart2]);
+    
+        // Chart GPP time series for the selected area of interest if there are multiple dates.
+    var chart3 = ui.Chart.image
+                    .seriesByRegion({
+                      imageCollection: band3,
+                      regions: aoi3,
+                      reducer: ee.Reducer.mean(),
+                      band: bandname3,
+                      scale: scale,
+                      xProperty: 'system:time_start'
+                    })
+                    .setOptions({
+                      titlePostion: 'none',
+                      legend: {position: 'none'},
+                      hAxis: {title: 'Date'},
+                      vAxis: {title: 'GPP  kg*C/m^2'},
+                      series: {0: {color: '2ecc71'}}
+                    });
+    
+    // Replace the existing chart in the chart panel with the new chart.
+    chartPanel3.widgets().reset([chart3]);
+    
+    // Chart GPP time series for the selected area of interest if there are multiple dates.
+    var chart4 = ui.Chart.image
+                    .seriesByRegion({
+                      imageCollection: band4,
+                      regions: aoi4,
+                      reducer: ee.Reducer.mean(),
+                      band: bandname4,
+                      scale: scale,
+                      xProperty: 'system:time_start'
+                    })
+                    .setOptions({
+                      titlePostion: 'none',
+                      legend: {position: 'none'},
+                      hAxis: {title: 'Date'},
+                      vAxis: {title: 'GPP  kg*C/m^2'},
+                      series: {0: {color: '2ecc71'}}
+                    });
+    
+    // Replace the existing chart in the chart panel with the new chart.
+    chartPanel4.widgets().reset([chart4]);
+
+  } else {
+      //Only display GPP mean for the timeframe if there is only one image in the collection
+      // Calculate the mean and standard deviation of the band for the AoI.
+      var stats1 = band1.first().reduceRegion({
+        reducer: ee.Reducer.mean().combine(ee.Reducer.stdDev(), '', true),
+        geometry: aoi1,
+        scale: 500,
+        maxPixels: 1e9
+      });
+      
+      // Convert the result to a dictionary.
+      var statsDict1 = ee.Dictionary(stats1);
+
+      var gppScaledMean1 = statsDict1.get(bandname1+"_mean").getInfo();
+      var regionDisplay1 = ui.Label({
+          value: 'Mean GPP Value for Region: '+gppScaledMean1+' kg*C/m^2',
+          style: {fontWeight: 'bold'}
+        });
+        
+      chartPanel1.widgets().reset([regionDisplay1]);
+      
+      
+      //Only display GPP mean for the timeframe if there is only one image in the collection
+      // Calculate the mean and standard deviation of the band for the AoI.
+      var stats2 = band2.first().reduceRegion({
+        reducer: ee.Reducer.mean().combine(ee.Reducer.stdDev(), '', true),
+        geometry: aoi2,
+        scale: 500,
+        maxPixels: 1e9
+      });
+      
+      // Convert the result to a dictionary.
+      var statsDict2 = ee.Dictionary(stats2);
+
+      var gppScaledMean2 = statsDict2.get(bandname2+"_mean").getInfo();
+      var regionDisplay2 = ui.Label({
+          value: 'Mean GPP Value for Region: '+gppScaledMean2+' kg*C/m^2',
+          style: {fontWeight: 'bold'}
+        });
+        
+      chartPanel2.widgets().reset([regionDisplay2]);
+      
+      //Only display GPP mean for the timeframe if there is only one image in the collection
+      // Calculate the mean and standard deviation of the band for the AoI.
+      var stats3 = band3.first().reduceRegion({
+        reducer: ee.Reducer.mean().combine(ee.Reducer.stdDev(), '', true),
+        geometry: aoi3,
+        scale: 500,
+        maxPixels: 1e9
+      });
+      
+      // Convert the result to a dictionary.
+      var statsDict3 = ee.Dictionary(stats3);
+
+      var gppScaledMean3 = statsDict3.get(bandname3+"_mean").getInfo();
+      var regionDisplay3 = ui.Label({
+          value: 'Mean GPP Value for Region: '+gppScaledMean3+' kg*C/m^2',
+          style: {fontWeight: 'bold'}
+        });
+        
+      chartPanel3.widgets().reset([regionDisplay3]);
+      
+      //Only display GPP mean for the timeframe if there is only one image in the collection
+      // Calculate the mean and standard deviation of the band for the AoI.
+      var stats4 = band4.first().reduceRegion({
+        reducer: ee.Reducer.mean().combine(ee.Reducer.stdDev(), '', true),
+        geometry: aoi3,
+        scale: 500,
+        maxPixels: 1e9
+      });
+      
+      // Convert the result to a dictionary.
+      var statsDict4 = ee.Dictionary(stats4);
+
+      var gppScaledMean4 = statsDict4.get(bandname4+"_mean").getInfo();
+      var regionDisplay4 = ui.Label({
+          value: 'Mean GPP Value for Region: '+gppScaledMean4+' kg*C/m^2',
+          style: {fontWeight: 'bold'}
+        });
+        
+      chartPanel4.widgets().reset([regionDisplay4]);
+    }
+}
+
+function addFluxTowerLayer(isChecked, map){
+    //Set up flux towers
+    if(isChecked){
+      var fluxmarkers = towers.style({
+        color: 'black',
+        width: 1,
+        fillColor: 'E333FF',  // with alpha set for partial transparency
+        lineType: 'solid',
+        pointSize: 4,
+        pointShape: 'circle'
+      });
+  
+      map.addLayer(fluxmarkers, null, "Flux Towers");
+    } else {
+      removeLayer("Flux Towers", map);
+    }
+}
+
+var removeLayer = function(name, map) {
+
+  var layers = map.layers()
+  // list of layers names
+  var names = []
+  layers.forEach(function(lay) {
+    var lay_name = lay.getName()
+    names.push(lay_name)
+  })
+  // get index
+  var index = names.indexOf(name)
+
+  if (index > -1) {
+    // if name in names
+    var layer = layers.get(index);
+    map.remove(layer)
+  } else {
+    print('Layer '+name+' not found')
+  }
+}
+
+
+
+//------------------------------------------------------------------------------------
+//  APP EVENTS
+//------------------------------------------------------------------------------------
+
+chkFluxtowerLayer.onChange(function(isChecked) {
+  addFluxTowerLayer(isChecked, map1);
+  addFluxTowerLayer(isChecked, map2);
+  addFluxTowerLayer(isChecked, map3);
+  addFluxTowerLayer(isChecked, map4);
+});
+
+
