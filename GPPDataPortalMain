@@ -513,7 +513,7 @@ var legendLabelsUncertainty = ui.Panel({
 //IGBP legend
 var legendIGBP = ui.Panel({
   style: {
-    position: 'bottom-right',
+    position: 'top-right',
     padding: '8px 15px'
   }
 });
@@ -521,7 +521,7 @@ var legendIGBP = ui.Panel({
 //IGBP legend
 var legendKoppen = ui.Panel({
   style: {
-    position: 'bottom-right',
+    position: 'top-right',
     padding: '8px 15px'
   }
 });
